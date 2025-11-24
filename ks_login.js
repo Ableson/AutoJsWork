@@ -109,8 +109,8 @@ function kuaishouLogin(phone, pwd) {
             if (codeInput) codeInput.setText(smsCode); else console.log('未找到验证码输入框')
             // 4. 继续后续流程
             toast("验证码已填写：" + smsCode);
-            let validateBtn = text('验证').findOne(1000);
-            if (validateBtn) validateBtn.click();
+            let validateBtn = text('验证').findOne(2000);
+            if (validateBtn) validateBtn.click(); else 
         } else {
             console.log('未找到获取验证码按钮');
         }
