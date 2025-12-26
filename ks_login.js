@@ -20,7 +20,7 @@ const unit = 60;
  * @param {关键字} keyWord 
  * @returns 
  */
-function $(type, keyWord){
+function $(type, keyWord, nth, idx){
     let ele = undefined;
     let findCount = 0;
     while(true){
@@ -39,8 +39,18 @@ function $(type, keyWord){
                 break;
             case OperationType.CLASS_NAME:
                 sleep(1000);
-                ele = className(keyWord).find();
+                ele = className(keyWord);
+                if(nth){
+                    ele = ele.depth(nth);
+                }
+                if(idx){
+                    ele = ele.indexInParent(idx);
+                }
+                ele = ele.find();
                 break;
+            default:
+                console.log('操作类型不存在：'+ type);
+                return;
         }
         if(ele){
             return ele;
@@ -153,28 +163,8 @@ auto.setMode("normal");   // 兼容模式，4.x 专用
 
 // 快手包名
 const PKG = "com.smile.gifmaker";
+// const PKG = "com.kuaishou.nebula";
 
-// 简单 UI 方便手动填账号
-// ui.layout(
-//     <vertical padding="16">
-//         <text textSize="16sp" text="快手一键登录 Demo"/>
-//         <text textSize="14sp" text="手机号："/>
-//         <input id="phone" hint="11 位手机号" inputType="phone"/>
-//         <text textSize="14sp" text="密码："/>
-//         <input id="pwd" hint="6-20 位密码" inputType="textPassword"/>
-//         <button id="start" text="开始登录"/>
-//     </vertical>
-// );
-
-// ui.start.on("click", function () {
-//     let phone = ui.phone.text();
-//     let pwd = ui.pwd.text();
-//     if (!/^1[3-9]\d{9}$/.test(phone)) {
-//         toast("手机号格式错误");
-//         return;
-//     }
-    
-// });
 const phone = '13982227224'
 const pwd  = 'tgx123456.'
 threads.start(function () {
@@ -183,6 +173,9 @@ threads.start(function () {
     // 2. 点击“我”
     // let ele = $(OperationType.DESC, '我');
     // if (ele) ele.click();
+
+    // let home = $(OperationType.DESC, '首页');
+    // if( home ) home.click();
     // 3. 回到登录界面，尝试输入手机号
     // let phone_ele = $(OperationType.TEXT, '请输入手机号');
     // if (phone_ele) phone_ele.setText(phone);
@@ -224,104 +217,60 @@ threads.start(function () {
     //     if(goto_validate) goto_validate.click();
     // }
     // switchVideo('up')
+    // let swipeCount = 30;
+    // for(let i = 0; i< swipeCount; i++){
+    //     switchVideo('up');
+    //     sleep(getRandomInt(30000, 33000));
+    //     console.log('当前第'+i+1+'个视频')
+    // }
+
+    // signed();
+    let gotoVideo = $(OperationType.TEXT, '去看视频');
+    if(gotoVideo) gotoVideo.click();
+
+    switchVideo('up')
     let swipeCount = 30;
     for(let i = 0; i< swipeCount; i++){
         switchVideo('up');
-        sleep(getRandomInt(30000, 33000));
-        console.log('当前第'+i+1+'个视频')
+        sleep(getRandomInt(15000, 20000));
+        console.log('当前第'+(i+1)+'个视频')
     }
 });
 
-function kuaishouLogin(phone, pwd) {
-    // 1. 打开快手
-    app.launchPackage(PKG);
-    sleep(3000);
 
-    /* 新增：监测同意按钮 */
-    agreeIfExist();
-    // 2. 点右下角“我的”
-    let mine = desc("我的").findOne(8000);
-    if (mine) {
-        mine.click(); 
-    }else {
-        mine = desc('我').findOne(8000)
-        if (mine) mine.click(); else throw "找不到‘我的’也找不到‘我’"
-    }
-    sleep(1500);
-    // 3. 点“登录”按钮
-    let loginBtn = text("登 录").findOne(3000);
-    if (loginBtn) loginBtn.click(); else console.log("找不到登录按钮");
-    loginBtn = textContains('其他登录').findOne(3000)
-    if (loginBtn) loginBtn.click(); else throw "找不到含有其他登录的按钮"
-    sleep(1500);
+function signed(){
+    // let home = $(OperationType.DESC, '首页')
+    // if(home) home.click();
+    // 点击红包
+    // clickRed();
     
-    // 4. 选择“密码登录”（默认是短信，要点一次切换）
-    let pwdTab = text("密码登录").findOne(3000);
-    if (pwdTab) pwdTab.click(); else throw "找不到密码登录";
-    sleep(1000);
-
-    // 5. 输入手机号
-    let phoneInput = id("com.smile.gifmaker:id/phone_input").findOne(3000);
-    if (phoneInput) {
-        phoneInput.setText(phone);
-    } else {
-        // 兼容旧版无 id，用控件特征
-        phoneInput = text('请输入手机号').findOne(1500);
-        if (phoneInput) phoneInput.setText(phone);
-    }
-
-    // 6. 输入密码
-    let pwdInput = id("com.smile.gifmaker:id/password_input").findOne(1000);
-    if (pwdInput) {
-        pwdInput.setText(pwd);
-    } else {
-        pwdInput = className("EditText").find()[1];
-        if (pwdInput) pwdInput.setText(pwd);
-    }
-    back();
-    // 7. 点“登录”按钮
-    let loginOk = id('com.kuaishou.nebula:id/confirm_btn').findOne(3000);
-    if (loginOk) loginOk.click(); else throw "找不到确认登录";
-    sleep(3000);
-    let loginAgree = id('com.kuaishou.nebula:id/protocol_dialog_positive').findOne(3000);
-    if(loginAgree){
-        loginAgree.click();
-    }
-    let goValidate = text('去验证').findOne(2000);
-    if(goValidate) {
-        goValidate.click();
-        let codeBtn = text('获取验证码').findOne(3000);
-        if(codeBtn) {
-            codeBtn.click();
-            sleep(2000);
-            let smsCode = dialogs.rawInput("请输入收到的验证码", "");
-            if (!smsCode) {
-                toast("用户取消，脚本结束");
-                exit();
-            }
-            // 3. 继续填写验证码
-            sleep(1000);
-            let codeInput = className("EditText").find()[1];
-            if (codeInput) codeInput.setText(smsCode); else console.log('未找到验证码输入框')
-            // 4. 继续后续流程
-            toast("验证码已填写：" + smsCode);
-            let validateBtn = text('验证').findOne(2000);
-            if (validateBtn) validateBtn.click(); else throw "没有验证按钮"
-        } else {
-            console.log('未找到获取验证码按钮');
-        }
-    } else {
-        console.log('无需验证步骤')
-    }
-    // 8. 成功判断（出现“首页”或“关注”即可）
-    let home = text("首页").findOne(8000) || desc("首页").findOne(8000);
-    if (home) {
-        toast("快手登录成功！");
-    } else {
-        toast("登录失败，请检查账号/网络");
-    }
+    // let signBtn = $(OperationType.TEXT,'立即签到');
+    // if(signBtn) signBtn.click();
+    
+    
+    // let goldenBtn = $(OperationType.CONTAINS, '点可领');
+    // if(goldenBtn) goldenBtn.click();
+    // let eles = $(OperationType.CLASS_NAME,'android.widget.Image',12,0);
+    // console.log(eles.size());
+    // if(eles && eles.size() > 0 ){
+    //     eles.get(eles.size() - 1).click();
+    // }
 }
 
+
+
+
+/**
+ * 点击红包
+ */
+function clickRed(){
+    let eles = className('android.view.ViewGroup').depth(5).indexInParent(0).find();
+    if(eles && eles.size() > 0){
+        let ele = eles.get(0);
+        let location = ele.bounds();
+        click(location.centerX()+getRandomInt(1,3), location.centerY()+getRandomInt(1,3));
+    }
+}
 /**
  * 等待并点击“同意并继续”
  * 最多 8 秒，超时视为无弹窗
