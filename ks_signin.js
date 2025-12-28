@@ -991,9 +991,6 @@ function signInForAccount(account) {
  * 主函数：执行多账号签到流程
  */
 function main() {
-    let account = {phone:'18954047490', password:'tgx123456.'}
-    login(account);
-    return false;
     console.log("========== 快手多账号自动签到开始 ==========");
     console.log("时间：" + new Date().toLocaleString());
     try {
@@ -1034,13 +1031,13 @@ function main() {
             }
             
             // 执行签到
-            // if (signInForAccount(account)) {
-            //     successCount++;
-            //     console.log("✓ 账号 " + account.name + " 签到成功");
-            // } else {
-            //     failCount++;
-            //     console.log("✗ 账号 " + account.name + " 签到失败");
-            // }
+            if (signInForAccount(account)) {
+                successCount++;
+                console.log("✓ 账号 " + account.name + " 签到成功");
+            } else {
+                failCount++;
+                console.log("✗ 账号 " + account.name + " 签到失败");
+            }
             // 账号之间延迟
             if (i < accounts.length - 1) {
                 console.log("等待 " + getRandomInt(3000, 5000) + " 毫秒后处理下一个账号...");
