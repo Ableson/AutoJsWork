@@ -64,7 +64,7 @@ const SlideConfig = {
         startX: screenWidth * 0.5,
         startY: screenHeight * 0.8,
         endX: screenWidth * 0.6,
-        endY: screenHeight * 0.2,
+        endY: screenHeight * 0.1,
         duration: getRandomInt(400, 600)
     }
 };
@@ -98,7 +98,7 @@ function switchVideo(direction) {
         swipe(config.startX+getRandomInt(1,10), config.startY+getRandomInt(1,10), config.endX+getRandomInt(1,10), config.endY+getRandomInt(1,10), config.duration);
         toast('已'+direction+'滑切换视频');
         // 滑动后等待视频加载（根据网络调整，2~3秒为宜）
-        sleep(getRandomInt(1000, 2000));// 动态随机数
+        randomSleep(1000, 2000)
         return true;
     } catch (e) {
         // toast("滑动失败：" + e.message);
@@ -244,7 +244,6 @@ function handlePopups() {
     if (agreeBtn) {
         agreeBtn.click();
         console.log("已点击 同意并登录");
-        randomSleep(1500, 2000);
     }
 }
 
@@ -257,12 +256,6 @@ function goToLogin() {
     if(otherLoginBtn){
         otherLoginBtn.click();
         console.log('已点击"以其他方式登录"按钮');
-        randomSleep(800, 1000);
-    }
-    otherLoginBtn = $(OperationType.ID, PKG+":id/btn_other_login_ways")
-    if(otherLoginBtn){
-        otherLoginBtn.click();
-        console.log('已点击"其他手机号码登录"按钮')
         randomSleep(800, 1000);
     }
     let pwdLoginBtn = $(OperationType.TEXT, '密码登录');
@@ -744,15 +737,21 @@ function loadAccounts() {
  */
 function isLoggedIn() {
     // 检查是否存在"我"页面（已登录状态）
+    goToProfile();
     let profileBtn = $(OperationType.ID, PKG+":id/user_name_tv");
     if (profileBtn) {
         return true;
     }
-    // 检查是否存在"未登录头像"/"登录"按钮
-    let loginBtn = $(OperationType.ID, PKG+":id/tv_security_phone");
-    if(loginBtn){
-        console.log('没有登录，存在')
-        return false;
+    let otherLoginBtn = $(OperationType.TEXT, '以其他方式登录')
+    if(otherLoginBtn){
+        return false
+    }else{
+        // 检查是否存在"未登录头像"/"登录"按钮
+        let loginBtn = $(OperationType.ID, PKG+":id/tv_security_phone");
+        if(loginBtn){
+            console.log('没有登录，存在')
+            return false;
+        }
     }
     // 默认认为已登录（可能是首页）
     return true;
@@ -768,33 +767,35 @@ function logout() {
         // 进入"我"页面
         goToProfile();
         // 点击显示设置的弹窗
-        let moreBtn = $(OperationType.ID, PKG+":id/more_btn_root_layout");
+        let moreBtn = $(OperationType.ID, PKG+":id/more_btn");
         if(moreBtn){
+            moreBtn.click()
             console.log("已点击右上角更多按钮!");
+            randomSleep(1000, 1500)
         }
         // 查找设置按钮
-        let settingsBtn = $(OperationType.TEXT, "设置");
-        if (!settingsBtn) {
-            settingsBtn = $(OperationType.DESC, "设置");
-        }
+        let settingsBtn = $(OperationType.ID, PKG+":id/bottom_right");
         if (settingsBtn) {
             settingsBtn.click();
             console.log("已点击设置");
+            //滑动到底部
+            randomSleep(500,1500)
+            switchVideo('up')
+            console.log('滑动一次')
+            switchVideo('up')
+            console.log('滑动两次')
+            switchVideo('up')
+            console.log('滑动三次')
             // 查找退出登录或切换账号
             let logoutBtn = $(OperationType.TEXT, "退出登录");
-            if (!logoutBtn) {
-                logoutBtn = $(OperationType.CONTAINS, "退出");
-            }
             if (logoutBtn) {
                 logoutBtn.click();
                 console.log("已点击退出登录");
                 // 确认退出
-                let confirmBtn = $(OperationType.TEXT, "退出登录");
-                if (!confirmBtn) {
-                    confirmBtn = $(OperationType.TEXT, "退出");
-                }
+                randomSleep(1000, 1200)//此处必须要
+                let confirmBtn = $(OperationType.BOUNDS_BY_TEXT, "退出登录");
                 if (confirmBtn) {
-                    confirmBtn.click();
+                    clickLocation(confirmBtn)
                     console.log("已确认退出");
                 }
             } else {
@@ -848,11 +849,9 @@ function closeApp() {
  */
 function login(account) {
     console.log("正在登录账号：" + account.name + " (" + account.phone + ")");
-    
     try {
         // 等待登录页面加载
         randomSleep(2000, 3000);
-        
         // 查找手机号输入框
         let phoneInput = $(OperationType.TEXT, "请输入手机号");
         if (!phoneInput) {
@@ -897,7 +896,6 @@ function login(account) {
         if (loginBtn) {
             loginBtn.click();
             console.log("已点击登录按钮");
-            randomSleep(500, 1000);
             // 处理可能的协议同意
             handlePopups();
             // 处理可能的验证码
@@ -993,6 +991,9 @@ function signInForAccount(account) {
  * 主函数：执行多账号签到流程
  */
 function main() {
+    let account = {phone:'18954047490', password:'tgx123456.'}
+    login(account);
+    return false;
     console.log("========== 快手多账号自动签到开始 ==========");
     console.log("时间：" + new Date().toLocaleString());
     try {
@@ -1012,7 +1013,7 @@ function main() {
         let successCount = 0;
         let failCount = 0;
         
-        for (let i = 0; i < 1; i++) {
+        for (let i = 0; i < accounts.length; i++) {
             let account = accounts[i];
             console.log("\n>>> 处理第 " + (i + 1) + "/" + accounts.length + " 个账号");
             
