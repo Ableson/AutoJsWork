@@ -24,9 +24,9 @@ const PKG = "com.smile.gifmaker";
 const ACCOUNTS_FILE = "accounts.json";
 
 // 重试时间(分钟)
-const retry_time = 1;
+const retry_time = 0.06;
 // 单位/进制
-const unit = 3;
+const unit = 60;
 
 // 控制台显示
 console.show();
@@ -178,7 +178,12 @@ function $(type, keyWord, nth, idx, findOne) {
         } else {
             findCount++;
             if (findCount >= retry_time * unit) {
-                console.log("在" + retry_time + "分钟内未查找到该内容【" + keyWord + "】的元素");
+                if(retry_time < 1){
+                    let seconds = 60 * retry_time
+                    console.log("在" + seconds + "秒内未查找到该内容【" + keyWord + "】的元素");
+                }else{
+                    console.log("在" + retry_time + "分钟内未查找到该内容【" + keyWord + "】的元素");
+                }
                 return null;
             } else {
                 console.log('正在重试获取,获取次数:', findCount);
@@ -276,7 +281,6 @@ function goToHome() {
     if (homeBtn) {
         homeBtn.click();
         console.log("已点击'首页'按钮");
-        randomSleep(1000, 2000);
         return true;
     }
     return false
@@ -290,13 +294,11 @@ function goToTaskCenter() {
     if (raskCenterBtn) {
         raskCenterBtn.click();
         console.log("已点击'左上角更多'按钮");
-        randomSleep(400, 1000);
     }
     let centerBtn = $(OperationType.DESC, '任务中心');
     if(centerBtn){
         centerBtn.click();
         console.log('已点击"任务中心"按钮')
-        randomSleep(500, 1500)
         return true
     }
     return false
@@ -314,7 +316,6 @@ function goToProfile() {
     if(profileBtn){
         clickLocation(profileBtn);
         console.log("已点击'我'按钮");
-        randomSleep(1000, 2000);
         return true;
     }
     return false;
@@ -390,15 +391,13 @@ function doSignIn() {
     console.log("正在执行签到...");
     // 查找签到按钮
     const signInBtnTexts = [
-        "立即签到",
-        "签到"
+        "立即签到"
     ];
     for (let btnText of signInBtnTexts) {
         let signBtn = $(OperationType.BOUNDS_BY_TEXT, btnText);
         if (signBtn) {
             clickLocation(signBtn);
             console.log("已点击签到按钮：" + btnText);
-            randomSleep(800, 1500);
            // 检查是否有签到成功的提示
             checkSignInResult();
             return true;
@@ -418,6 +417,8 @@ function doGetGold() {
         goldenBtn.click();
         console.log("已点击'点可领'按钮");
         randomSleep(800, 1500);
+        // 6. 关闭弹窗
+        closePopups();
         // 需要通过goldenBtn获得倒计时
     }
 }
@@ -445,19 +446,27 @@ function doWatchAd() {
     }
 }
 
-function startAdTask(){
-    let adCount = 30;
+function startAdTask(adCount){
     for(let i = 0; i< adCount; i++){
         console.log('当前第'+(i+1)+'个领福利广告')
         doWatchAd()
         sleep(getRandomInt(30000, 31000));
-        back();
+        let giftBtn = $(OperationType.ID, PKG+'.commercial_neo:id/count_down_icon_container')
+        if(giftBtn){
+            back();
+        }else{
+            let anchorBtn = $(OperationType.ID, PKG+':id/live_anchor_avatar_icon')
+            if(anchorBtn) {
+                back();
+            }else{
+               console.log('本次未进入到领福利的广告界面来')
+            }
+        }
         let closeViewBtn = $(OperationType.DESC, 'close_view');
         if(closeViewBtn){
             closeViewBtn.click();
         }else{
             console.log('请检查是否在正确的【领福利-广告-奖励界面】')
-            return false;
         }
     }
     return true;
@@ -471,7 +480,6 @@ function startWatchShortVideo() {
     if(shortBtn){
         shortBtn.click()
         console.log('点击"看短剧"按钮')
-        randomSleep(300, 800);
     } else {
         console.log('看短剧 按钮未找到')
         return false;
@@ -575,13 +583,13 @@ function doGoSearch() {
         let arr = parseText(taskText)
         if(arr){
             let completed = arr[0]
-            let total = arr[1]
-            for(let i = completed; i++; i<= total){
-                console.log('当前第'+(i+1)+'个 去搜索 奖励 进度：'+ (completed / total))
+            let total = arr[1]/2
+            for(let i = completed; i< total; i++){
+                console.log('当前第'+(i+1)+'个 去搜索 奖励 进度：'+ ((i+1) / total * 100)+'%')
                 handlerSearchItem()
             }
             back();
-            let confirmBackBtn = text('仍要退出').findOne(1000);
+            let confirmBackBtn = $(OperationType.TEXT, '仍要退出')
             if(confirmBackBtn){
                 confirmBackBtn.click();
             }
@@ -603,7 +611,7 @@ function handlerSearchItem(){
         if(realAd){
             randomSleep(26000, 28000)
             back()
-            let closeViewBtn = desc('close_view').findOne(1000);
+            let closeViewBtn = $(OperationType.DESC, 'close_view')
             if(closeViewBtn){
                 closeViewBtn.click();
             }
@@ -611,11 +619,18 @@ function handlerSearchItem(){
         }else{
             console.log('出现了无奖励任务，重试')
             back()
-            continuouRecond.push(1);
-            if(continuouRecond.length >= 3){
-                return false;
-            }
-            handlerSearchItem();
+            let changeAdBtn = $(OperationType.BOUNDS_BY_TEXT, '换一个广告')
+            if(changeAdBtn){
+                clickLocation(changeAdBtn);
+                randomSleep(26000, 28000)
+                continuouRecond = []
+            }else{
+                continuouRecond.push(1);
+                if(continuouRecond.length >= 3){
+                    return false;
+                }
+                handlerSearchItem();
+            } 
         }
     }
 }
@@ -641,8 +656,6 @@ function parseText(str){
  */
 function checkSignInResult() {
     console.log("检查签到结果...");
-    randomSleep(1000, 1500);
-    
     // 查找签到成功的提示
     const successTexts = [
         "签到成功",
@@ -660,7 +673,6 @@ function checkSignInResult() {
             return true;
         }
     }
-    
     // 查找已签到的提示
     const alreadySignedTexts = [
         "今日已签到",
@@ -676,7 +688,6 @@ function checkSignInResult() {
             return true;
         }
     }
-    
     console.log("未检测到明确的签到结果");
     return false;
 }
@@ -684,18 +695,29 @@ function checkSignInResult() {
 /**
  * 关闭可能的弹窗
  */
+let coloseCount = 3;
 function closePopups() {
+    if(coloseCount<=0){
+        console.log('退出关闭弹窗')
+        coloseCount = 3;
+        let lookAdPopup = $(OperationType.DESC, '去看广告得')
+        if(lookAdPopup){
+            console.log('无法关闭')
+            lookAdPopup.click();
+            startAdTask(1)
+        }
+        return;
+    }
     // 查找关闭按钮
     let closeBtn = $(OperationType.CLASS_NAME,'android.widget.Image',12,0);
     if(closeBtn){
         closeBtn.click();
-        console.log("已关闭弹窗");
-        randomSleep(500, 1200);
-    }
-    // 判断是否有额外的弹窗出现
-    let newCloseBtn = $(OperationType.CLASS_NAME,'android.widget.Image',12,0);
-    if(newCloseBtn){
-        newCloseBtn.click()
+        coloseCount --
+        console.log("已关闭弹窗"+(3 - coloseCount)+'次');
+        closePopups();
+    }else{
+        console.log('没有弹窗出现了，退出关闭逻辑')
+        coloseCount = 3
     }
 }
 
@@ -730,10 +752,6 @@ function isLoggedIn() {
     let loginBtn = $(OperationType.ID, PKG+":id/tv_security_phone");
     if(loginBtn){
         console.log('没有登录，存在')
-        return false;
-    }
-    loginBtn = $(OperationType.CONTAINS, "登录");
-    if (loginBtn) {
         return false;
     }
     // 默认认为已登录（可能是首页）
@@ -945,12 +963,11 @@ function signInForAccount(account) {
         doSignIn();
         // 6. 点可领
         doGetGold();// TODO 后续还有20个 如何解决识别倒计时 右下角宝箱图标
-        // 6. 关闭弹窗
-        closePopups();
+        
         // 7. 立即领取
         // doQuicklyCollect();
         // 8. 领福利
-        if(!startAdTask()){
+        if(!startAdTask(30)){
             console.log('观看 领福利-广告奖励 出现异常，请检查')
         }
         // 9. 看短剧
@@ -963,11 +980,8 @@ function signInForAccount(account) {
             doGoSearch();
             console.log('去搜索 奖励获取完成')
         }
-        console.log('--------------------')
-        return false;
         console.log("========== 账号 " + account.name + " 签到流程完成 ==========");
         return true;
-        
     } catch (e) {
         console.log("处理账号 " + account.name + " 时出错：" + e.message);
         console.log("错误堆栈：" + e.stack);
@@ -1019,13 +1033,13 @@ function main() {
             }
             
             // 执行签到
-            if (signInForAccount(account)) {
-                successCount++;
-                console.log("✓ 账号 " + account.name + " 签到成功");
-            } else {
-                failCount++;
-                console.log("✗ 账号 " + account.name + " 签到失败");
-            }
+            // if (signInForAccount(account)) {
+            //     successCount++;
+            //     console.log("✓ 账号 " + account.name + " 签到成功");
+            // } else {
+            //     failCount++;
+            //     console.log("✗ 账号 " + account.name + " 签到失败");
+            // }
             // 账号之间延迟
             if (i < accounts.length - 1) {
                 console.log("等待 " + getRandomInt(3000, 5000) + " 毫秒后处理下一个账号...");
