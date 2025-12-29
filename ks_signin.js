@@ -904,7 +904,7 @@ function login(account) {
                 console.log("需要验证码，请手动处理");
                 toast("账号 " + account.name + " 需要验证码，请手动处理");
                 // 等待用户手动处理验证码
-                sleep(30000); // 等待30秒
+                sleep(60000); // 等待60秒
             }
             // 检查是否登录成功
             randomSleep(3000, 4000);
@@ -932,7 +932,6 @@ function login(account) {
  */
 function signInForAccount(account) {
     console.log("\n========== 开始处理账号：" + account.name + " ==========");
-    goToProfile()
     try {
         // 1. 检查是否需要登录
         if (!isLoggedIn()) {
