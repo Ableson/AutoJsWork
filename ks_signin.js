@@ -107,6 +107,29 @@ function switchVideo(direction) {
     }
 }
 /**
+ * xx | xx(1500)
+ * @param {*} keyWord 
+ */
+function parseKeyWord(keyWord){
+    let reg = /^([^()]+)(?:\((\d+)\))?$/;
+    let match = keyWord.match(reg);
+    
+    let result = {
+        prefix: undefined, // 前缀（如xx）
+        num: retry_time * unit     // 数字（如1500，无则为空）
+    };
+
+    if (match) {
+        // 提取前缀（去除首尾空格，兼容"xx (1500)"这类带空格的情况）
+        result.prefix = match[1].trim();
+        // 提取数字（存在则赋值，否则为空）
+        result.num = match[2] ? match[2].trim()*1/1000 : retry_time * unit;
+    } else {
+        toast('字符串格式不匹配！');
+    }
+    return result;
+}
+/**
  * 自动超时查找元素（统一查找函数）
  * @param {操作类型} type OperationType枚举值
  * @param {关键字} keyWord 查找关键字
@@ -118,7 +141,9 @@ function switchVideo(direction) {
 function $(type, keyWord, nth, idx, findOne) {
     let ele = undefined;
     let findCount = 0;
-    
+    let result = parseKeyWord(keyWord)
+    keyWord = result.prefix
+    retryCount = result.num
     // CLASS_NAME类型默认返回find()结果，其他类型默认返回findOne()结果
     let shouldFindOne = findOne !== undefined ? findOne : (type !== OperationType.CLASS_NAME);
     
@@ -177,9 +202,9 @@ function $(type, keyWord, nth, idx, findOne) {
             return ele;
         } else {
             findCount++;
-            if (findCount >= retry_time * unit) {
+            if (findCount >= retryCount) {
                 if(retry_time < 1){
-                    let seconds = 60 * retry_time
+                    let seconds = retryCount
                     console.log("在" + seconds + "秒内未查找到该内容【" + keyWord + "】的元素");
                 }else{
                     console.log("在" + retry_time + "分钟内未查找到该内容【" + keyWord + "】的元素");
@@ -448,14 +473,19 @@ function startAdTask(adCount){
         if(giftBtn){
             back();
         }else{
-            let anchorBtn = $(OperationType.ID, PKG+':id/live_anchor_avatar_icon')
-            if(anchorBtn) {
+            let followBtn = $(OperationType.TEXT, '关注')
+            if(followBtn) {
                 back();
+                let exitLive = $(OperationType.BOUNDS_BY_TEXT, '退出(1500)')
+                if(exitLive){
+                    clickLocation(exitLive)
+                }
+                return true;
             }else{
                console.log('本次未进入到领福利的广告界面来')
             }
         }
-        let closeViewBtn = $(OperationType.DESC, 'close_view');
+        let closeViewBtn = $(OperationType.DESC, 'close_view(1500)');
         if(closeViewBtn){
             closeViewBtn.click();
         }else{
@@ -604,6 +634,7 @@ function handlerSearchItem(){
         if(realAd){
             randomSleep(26000, 28000)
             back()
+            randomSleep(500, 800)
             let closeViewBtn = $(OperationType.DESC, 'close_view')
             if(closeViewBtn){
                 closeViewBtn.click();
@@ -693,7 +724,7 @@ function closePopups() {
     if(coloseCount<=0){
         console.log('退出关闭弹窗')
         coloseCount = 3;
-        let lookAdPopup = $(OperationType.DESC, '去看广告得')
+        let lookAdPopup = $(OperationType.CONTAINS, '去看广告得')
         if(lookAdPopup){
             console.log('无法关闭')
             lookAdPopup.click();
@@ -955,6 +986,12 @@ function signInForAccount(account) {
         if(!goToTaskCenter()){
             console.log("进入'任务中心'页面失败");
             return false;
+        }else{
+            //判断是否出现了瓜分百亿金币的弹窗
+            let onHundredBtn = $(OperationType.TEXT, '立即参与')
+            if(onHundredBtn){
+                back();
+            }
         }
         // 5. 执行签到
         doSignIn();
