@@ -11,8 +11,10 @@ const OperationType = Object.freeze({
     ID: 4,
     CLASS_NAME: 5,
     BOUNDS_BY_TEXT: 6,
+    TEXT_MATCHES: 7,
 });
-
+const Account = {self: undefined, watch_video: 30}
+const sign_day = {label: '现金1.5元', val: 7}
 // 等待无障碍服务
 auto.waitFor();
 auto.setMode("normal");
@@ -26,7 +28,7 @@ const ACCOUNTS_FILE = "accounts.json";
 // 重试时间(分钟)
 const retry_time = 0.06;
 // 单位/进制
-const unit = 60;
+const unit = 6;
 
 // 控制台显示
 console.show();
@@ -112,8 +114,13 @@ function switchVideo(direction) {
  */
 function parseKeyWord(keyWord){
     let reg = /^([^()]+)(?:\((\d+)\))?$/;
-    let match = keyWord.match(reg);
-    
+    let match;
+    if (typeof keyWord === 'string') {
+        match = keyWord.match(reg)
+    }else{
+        match = ['', keyWord]
+    }
+
     let result = {
         prefix: undefined, // 前缀（如xx）
         num: retry_time * unit     // 数字（如1500，无则为空）
@@ -121,7 +128,11 @@ function parseKeyWord(keyWord){
 
     if (match) {
         // 提取前缀（去除首尾空格，兼容"xx (1500)"这类带空格的情况）
-        result.prefix = match[1].trim();
+        if (typeof keyWord === 'string') {
+            result.prefix = match[1].trim();
+        }else{
+            result.prefix = match[1];
+        }
         // 提取数字（存在则赋值，否则为空）
         result.num = match[2] ? match[2].trim()*1/1000 : retry_time * unit;
     } else {
@@ -161,11 +172,14 @@ function $(type, keyWord, nth, idx, findOne) {
             case OperationType.ID:
                 ele = id(keyWord).findOne(1000);
                 break;
+            case OperationType.TEXT_MATCHES:
+                ele = textMatches(keyWord).findOne(1000);
+                break;
             case OperationType.CLASS_NAME:
                 sleep(1000);
                 let classSelector = className(keyWord);
                 if (nth !== undefined) {
-                    classSelector = classSelector.depth(nth);
+                    classSelector = classSelector.depth(nth).clickable(true);
                 }
                 if (idx !== undefined) {
                     classSelector = classSelector.indexInParent(idx);
@@ -211,7 +225,7 @@ function $(type, keyWord, nth, idx, findOne) {
                 }
                 return null;
             } else {
-                console.log('正在重试获取,获取次数:', findCount);
+                console.log('正在重试获取:', keyWord, '获取次数:', findCount);
             }
         }
         sleep(1000);
@@ -242,6 +256,54 @@ function randomSleep(min, max) {
 }
 
 /**
+ * 处理打开快手时出现的权限请求弹窗
+ * 当 AutoJs6 通过 app.launchPackage 启动快手时，Android 系统会弹出
+ * "AutoJs6想要打开 快手, 是否允许" 确认对话框，需要点击 "始终允许" 完成授权。
+ * 使用 $ 自动超时查找机制监测弹窗，未检测到则静默退出，不影响后续流程。
+ * @return {Boolean} 是否成功处理了权限弹窗(未出现弹窗时返回 false)
+ */
+function handlePermissionDialog() {
+    console.log("开始监测 快手打开权限请求弹窗...");
+    // 用 $ 自动超时查找权限弹窗（可能不出现，超时即跳过）
+    let dialogTip = $(OperationType.CONTAINS, "想要打开");
+    if (dialogTip) {
+        console.log("检测到权限请求弹窗：" + dialogTip.text());
+        // 查找并点击 "始终允许" 按钮
+        let allowBtn = $(OperationType.TEXT, "始终允许");
+        if (allowBtn) {
+            allowBtn.click();
+            console.log("已点击 [始终允许] 按钮，授权 AutoJs6 打开快手");
+            return true;
+        } else {
+            console.log("未找到 [始终允许] 按钮，弹窗处理失败");
+        }
+    } else {
+        console.log("未检测到权限请求弹窗，继续执行后续流程");
+    }
+    return false;
+}
+
+/**
+ * 处理打开快手时出现的"同意并继续"协议弹窗
+ * 首次或冷启动快手时，可能会弹出隐私协议"同意并继续"按钮，需要点击以进入app。
+ * 使用 $ 自动超时查找机制监测弹窗，未检测到则静默退出，不影响后续流程。
+ * @return {Boolean} 是否成功点击了"同意并继续"按钮
+ */
+function handleAgreeDialog() {
+    console.log("开始监测 [同意并继续] 协议弹窗...");
+    // 用 $ 自动超时查找协议弹窗（可能不出现，超时即跳过）
+    let agreeBtn = $(OperationType.TEXT, "同意并继续");
+    if (agreeBtn) {
+        agreeBtn.click();
+        console.log("已点击 [同意并继续] 按钮");
+        return true;
+    } else {
+        console.log("未检测到 [同意并继续] 弹窗，继续执行后续流程");
+        return false;
+    }
+}
+
+/**
  * 打开快手app
  */
 function openKuaishou() {
@@ -249,9 +311,19 @@ function openKuaishou() {
     try {
         // 尝试通过包名启动
         app.launchPackage(PKG);
-        sleep(3000);
-        console.log("快手app已打开");
-        return true;
+        // 启动后持续监测并处理 "AutoJs6想要打开 快手, 是否允许" 权限请求弹窗
+        handlePermissionDialog();
+        // 监测并处理 "同意并继续" 协议弹窗
+        handleAgreeDialog();
+        // 通过查找底部导航栏"我"按钮确认 app 已加载完成（自动超时重试，替代固定 sleep）
+        let profileBtn = $(OperationType.TEXT, "我");
+        if (profileBtn) {
+            console.log("快手app已打开");
+            return true;
+        } else {
+            console.log("快手app启动超时，未找到主界面元素");
+            return false;
+        }
     } catch (e) {
         console.log("打开快手app失败：" + e.message);
         toast("打开快手app失败");
@@ -267,7 +339,7 @@ function handlePopups() {
     // 处理"同意并继续"弹窗
     let agreeBtn = $(OperationType.TEXT, "同意并登录");
     if (agreeBtn) {
-        agreeBtn.click();
+        clickElement(agreeBtn)
         console.log("已点击 同意并登录");
     }
 }
@@ -277,17 +349,29 @@ function handlePopups() {
  */
 function goToLogin() {
     console.log("正在进入'登录界面'")
-    let otherLoginBtn = $(OperationType.ID, PKG+":id/btn_other_login_ways")
-    if(otherLoginBtn){
-        otherLoginBtn.click();
-        console.log('已点击"以其他方式登录"按钮');
-        randomSleep(800, 1000);
-    }
-    let pwdLoginBtn = $(OperationType.TEXT, '密码登录');
-    if(pwdLoginBtn){
-        pwdLoginBtn.click()
-        console.log('已点击"密码登录"按钮')
-        randomSleep(800, 1000);
+    phoneLogin();
+    clickPwdBtn()
+}
+
+function agreenProtocol(){
+    // 先勾选"我已阅读并同意"协议复选框，否则登录按钮无反应
+    let agreeCheckbox = textContains("我已阅读并同意").findOne(2000);
+    if (agreeCheckbox) {
+        // 点击复选框前的圆形勾选区域
+        let bounds = agreeCheckbox.bounds();
+        let checkX = bounds.left - 30; // 复选框在文字左侧
+        let checkY = bounds.top + bounds.height() / 2;
+        click(checkX, checkY);
+        console.log("已勾选[我已阅读并同意]协议复选框");
+        randomSleep(500, 800);
+    } else {
+        console.log("未找到协议复选框，尝试点击协议文字本身");
+        let agreeText = textContains("我已阅读").findOne(1000);
+        if (agreeText) {
+            clickElement(agreeText);
+            console.log("已点击协议文字区域");
+            randomSleep(500, 800);
+        }
     }
 }
 /**
@@ -297,7 +381,7 @@ function goToHome() {
     console.log("正在进入'首页'页面...");
     let homeBtn = $(OperationType.TEXT, "首页");
     if (homeBtn) {
-        homeBtn.click();
+        clickElement(homeBtn)
         console.log("已点击'首页'按钮");
         return true;
     }
@@ -310,19 +394,97 @@ function goToTaskCenter() {
     console.log("正在进入'任务中心'页面...");
     let raskCenterBtn = $(OperationType.ID, PKG+":id/featured_left_hamburger");
     if (raskCenterBtn) {
-        raskCenterBtn.click();
+        clickElement(raskCenterBtn);
         console.log("已点击'左上角更多'按钮");
     }
     let centerBtn = $(OperationType.DESC, '任务中心');
     if(centerBtn){
-        centerBtn.click();
+        clickElement(centerBtn);
         console.log('已点击"任务中心"按钮')
         return true
     }
     return false
 }
-function clickLocation(locatioin){
-    click(locatioin.centerX()+getRandomInt(1,3), locatioin.centerY()+getRandomInt(1,3));
+function clickLocation(locatioin, label){
+    let x = locatioin.centerX()+getRandomInt(1,3);
+    let y = locatioin.centerY()+getRandomInt(1,3);
+    click(x, y);
+    randomSleep(1000, 1500);
+    console.log('已点击', label, '[', x,',', y, ']')
+}
+
+/**
+ * 智能点击元素：当目标元素 clickable=false 时（如 TextView 文字标签），
+ * 自动向上查找可点击的父容器（如 LinearLayout 按钮容器）再点击其坐标。
+ * @param {UiObject} element 待点击的 UiObject
+ * @return {Boolean} 是否成功点击
+ */
+function clickElement(element){
+    if(!element){
+        console.log('clickElement: 元素为空');
+        return false;
+    }
+    let label = element?.text();
+    // 向上查找可点击的祖先元素（最多5层）
+    try {
+        let target = element;
+        let depth = 0;
+        while(target && !target.clickable() && depth < 5){
+            target = target.parent();
+            depth++;
+        }
+        if(target && target.clickable()){
+            console.log('元素不可点击，改点击第' + depth + '层父容器');
+            clickLocation(target, target?.text());
+            return true;
+        }
+    }catch (e) {
+        // 兜底：直接用原元素坐标点击
+        console.log('兜底点击')
+        clickLocation(element, label);
+    }
+    return false;
+}
+
+/**
+ * 兄弟元素
+ * @param element
+ * @returns {boolean}
+ */
+function clickElementBro(element, isPrev){
+    if(!element){
+        console.log('clickElement: 元素为空');
+        return false;
+    }
+    // 向上查找可点击的祖先元素（最多5层）
+    try {
+        let target = element;
+        target = target.parent();
+        let parent = target.parent();
+        let myIndex = target.indexInParent();  // 获取自己在父节点中的位置
+        if(isPrev){
+            // 上一个兄弟
+            let prevSibling = (myIndex > 0) ? parent.child(myIndex - 1) : null;
+            console.log("上一个兄弟的文本:", prevSibling.text());
+            if(prevSibling && prevSibling.clickable()){
+                prevSibling.click();
+            }
+        }else{
+            // 下一个兄弟
+            let nextSibling = (myIndex < parent.childCount() - 1) ? parent.child(myIndex + 1) : null;
+            console.log("下一个兄弟的文本:", nextSibling.text());
+            if(nextSibling && nextSibling.clickable()){
+                nextSibling.click();
+            }
+        }
+    }catch (e) {
+    }
+    randomSleep(1000, 1500);
+    return false;
+}
+
+function clickAnyPonit(){
+    click(device.width - getRandomInt(50, 100), device.height - getRandomInt(50, 100));
 }
 /**
  * 进入"我"页面
@@ -332,13 +494,21 @@ function goToProfile() {
     // 方法1: 通过描述文字查找"我"按钮
     let profileBtn = $(OperationType.BOUNDS_BY_TEXT, '我');
     if(profileBtn){
-        clickLocation(profileBtn);
+        clickElement(profileBtn);
         console.log("已点击'我'按钮");
+        // 点击"我"后，检测是否进入了登录引导页（未登录状态）
         return true;
     }
     return false;
 }
 
+function phoneLogin(){
+    let phoneLoginBtn = $(OperationType.TEXT, "手机号登录");
+    if (phoneLoginBtn) {
+        console.log("检测到登录引导页");
+        clickElement(phoneLoginBtn);
+    }
+}
 /**
  * 查找并点击签到入口
  */
@@ -414,7 +584,7 @@ function doSignIn() {
     for (let btnText of signInBtnTexts) {
         let signBtn = $(OperationType.BOUNDS_BY_TEXT, btnText);
         if (signBtn) {
-            clickLocation(signBtn);
+            clickElement(signBtn);
             console.log("已点击签到按钮：" + btnText);
            // 检查是否有签到成功的提示
             checkSignInResult();
@@ -432,25 +602,38 @@ function doSignIn() {
 function doGetGold() {
     let goldenBtn = $(OperationType.CONTAINS, '点可领');
     if(goldenBtn) {
-        goldenBtn.click();
+        clickElement(goldenBtn);
         console.log("已点击'点可领'按钮");
-        randomSleep(800, 1500);
         // 6. 关闭弹窗
         closePopups();
         // 需要通过goldenBtn获得倒计时
     }
 }
+
+function scheduleTask(timeout, func, execCount){
+    func();
+    let timer = setInterval(() => {
+        execCount--;
+        if (execCount <= 0) clearInterval(timer);
+        func();
+    }, timeout);
+}
 /**
  * 立即领取 操作
  */
-function doQuicklyCollect() {
+function 立即领取() {
     //无效果
-    // let btn = $(OperationType.DESC, '立即领取')
-    // if(btn){
-    //     btn.click()
-    //     console.log('已点击"立即领取"按钮')
-    //     randomSleep(800, 1500)
-    // }
+    let btn = $(OperationType.CONTAINS, '立即领取')
+    clickElement(btn);
+    let 任务完成奖励xx金币 = $(OperationType.CONTAINS, '任务完成奖励');
+    if(任务完成奖励xx金币){
+        back();
+        let 日常任务 = $(OperationType.TEXT, '日常任务');
+        if(!日常任务){
+            goToHome();
+            goToTaskCenter();
+        }
+    }
 }
 /**
  * 观看广告 操作 30s
@@ -458,7 +641,7 @@ function doQuicklyCollect() {
 function doWatchAd() {
     let adBtn = $(OperationType.BOUNDS_BY_TEXT, '领福利')
     if(adBtn){
-        clickLocation(adBtn)
+        clickElement(adBtn)
         console.log('点击"领福利"按钮')
         randomSleep(300, 800);
     }
@@ -478,7 +661,7 @@ function startAdTask(adCount){
                 back();
                 let exitLive = $(OperationType.BOUNDS_BY_TEXT, '退出(1500)')
                 if(exitLive){
-                    clickLocation(exitLive)
+                    clickElement(exitLive)
                 }
                 return true;
             }else{
@@ -590,16 +773,13 @@ function doGoLingQu() {
  * 去搜索 操作
  */
 function goToSearch() {
-    console.log('前往 去搜索 页面')
     let searchBtn = $(OperationType.TEXT, '去搜索')
     if(searchBtn){
-        searchBtn.click();
-        console.log('已点击 "去搜索"按钮')
-        return true;
+        clickElement(searchBtn)
+        execSearchItem();
     }
-    return false;
 }
-function doGoSearch() {
+function execSearchItem() {
     let taskBtn = $(OperationType.CONTAINS, '已完成')
     if(taskBtn){
         let taskText = taskBtn.text()
@@ -611,10 +791,21 @@ function doGoSearch() {
                 console.log('当前第'+(i+1)+'个 去搜索 奖励 进度：'+ ((i+1) / total * 100)+'%')
                 handlerSearchItem()
             }
-            back();
-            let confirmBackBtn = $(OperationType.TEXT, '仍要退出')
-            if(confirmBackBtn){
-                confirmBackBtn.click();
+            taskBtn = $(OperationType.CONTAINS, '已完成')
+            if(taskBtn){
+                let taskText = taskBtn.text()
+                let arr = parseText(taskText)
+                if(arr){
+                    let completed = arr[0]
+                    let total = arr[1]/2
+                    if(completed === total){
+                        back();
+                        let confirmBackBtn = $(OperationType.TEXT, '仍要退出')
+                        if(confirmBackBtn){
+                            confirmBackBtn.click();
+                        }
+                    }
+                }
             }
         }
     }
@@ -626,35 +817,33 @@ let continuouRecond = []
  * @returns 
  */
 function handlerSearchItem(){
-    let itemBtn = $(OperationType.BOUNDS_BY_TEXT, '去搜索')
+    let itemBtn = $(OperationType.BOUNDS_BY_TEXT, '搜索')
     if(itemBtn){
-        log('点击了任务列表中的 "去搜索" 按钮')
-        clickLocation(itemBtn)
-        let realAd = $(OperationType.ID, PKG+'.commercial_neo:id/count_down_gift_icon');
+        log('点击了任务列表中的 "搜索" 按钮')
+        clickElement(itemBtn);
+        let realAd = $(OperationType.CONTAINS, '后可领取');
         if(realAd){
             randomSleep(26000, 28000)
-            back()
+            successAward();
             randomSleep(500, 800)
-            let closeViewBtn = $(OperationType.DESC, 'close_view')
-            if(closeViewBtn){
-                closeViewBtn.click();
-            }
+            let closeViewBtn = $(OperationType.DESC, 'close_view');
+            clickElement(closeViewBtn);
             continuouRecond = []
         }else{
-            console.log('出现了无奖励任务，重试')
-            back()
-            let changeAdBtn = $(OperationType.BOUNDS_BY_TEXT, '换一个广告')
-            if(changeAdBtn){
-                clickLocation(changeAdBtn);
-                randomSleep(26000, 28000)
-                continuouRecond = []
-            }else{
-                continuouRecond.push(1);
-                if(continuouRecond.length >= 3){
-                    return false;
-                }
-                handlerSearchItem();
-            } 
+            // console.log('出现了无奖励任务，重试')
+            // back()
+            // let changeAdBtn = $(OperationType.BOUNDS_BY_TEXT, '换一个广告')
+            // if(changeAdBtn){
+            //     clickElement(changeAdBtn);
+            //     randomSleep(26000, 28000)
+            //     continuouRecond = []
+            // }else{
+            //     continuouRecond.push(1);
+            //     if(continuouRecond.length >= 3){
+            //         return false;
+            //     }
+            //     handlerSearchItem();
+            // }
         }
     }
 }
@@ -733,16 +922,16 @@ function closePopups() {
         return;
     }
     // 查找关闭按钮
-    let closeBtn = $(OperationType.CLASS_NAME,'android.widget.Image',12,0);
-    if(closeBtn){
-        closeBtn.click();
-        coloseCount --
-        console.log("已关闭弹窗"+(3 - coloseCount)+'次');
-        closePopups();
-    }else{
-        console.log('没有弹窗出现了，退出关闭逻辑')
-        coloseCount = 3
-    }
+    // let closeBtn = $(OperationType.CLASS_NAME,'android.widget.Image',12,0);
+    // if(closeBtn){
+    //     closeBtn.click();
+    //     coloseCount --
+    //     console.log("已关闭弹窗"+(3 - coloseCount)+'次');
+    //     closePopups();
+    // }else{
+    //     console.log('没有弹窗出现了，退出关闭逻辑')
+    //     coloseCount = 3
+    // }
 }
 
 /**
@@ -769,21 +958,29 @@ function loadAccounts() {
 function isLoggedIn() {
     // 检查是否存在"我"页面（已登录状态）
     goToProfile();
+    // 优先检测：若 goToProfile 已导航到密码登录表单，直接判定为未登录
+    let pwdInput = id(PKG+":id/password_et").findOne(800);
+    if (pwdInput) {
+        console.log("当前处于密码登录表单，判定为未登录");
+        return false;
+    }
+    // 检测是否仍停留在登录引导页（未跳转）
+    let phoneLoginBtn = $(OperationType.TEXT, "手机号登录");
+    if (phoneLoginBtn) {
+        console.log("检测到登录引导页（手机号登录），判定为未登录");
+        return false;
+    }
     let profileBtn = $(OperationType.ID, PKG+":id/user_name_tv");
     if (profileBtn) {
         return true;
     }
-    let otherLoginBtn = $(OperationType.TEXT, '以其他方式登录')
-    if(otherLoginBtn){
-        return false
-    }else{
-        // 检查是否存在"未登录头像"/"登录"按钮
-        let loginBtn = $(OperationType.ID, PKG+":id/tv_security_phone");
-        if(loginBtn){
-            console.log('没有登录，存在')
-            return false;
-        }
+    // 检查是否存在"未登录头像"/"登录"按钮
+    let loginBtn = $(OperationType.ID, PKG+":id/tv_security_phone");
+    if(loginBtn){
+        console.log('没有登录，存在')
+        return false;
     }
+    agreenProtocol();
     // 默认认为已登录（可能是首页）
     return true;
 }
@@ -826,7 +1023,7 @@ function logout() {
                 randomSleep(1000, 1200)//此处必须要
                 let confirmBtn = $(OperationType.BOUNDS_BY_TEXT, "退出登录");
                 if (confirmBtn) {
-                    clickLocation(confirmBtn)
+                    clickElement(confirmBtn)
                     console.log("已确认退出");
                 }
             } else {
@@ -874,6 +1071,36 @@ function closeApp() {
 }
 
 /**
+ * 点击密码管理 并输入密码
+ * @returns {boolean}
+ */
+function clickPwdBtn(){
+    let pwdInput = $(OperationType.TEXT, '密码登录');
+    clickElement(pwdInput);
+    console.log("点击密码登录");
+    if (pwdInput) {
+        setVal(pwdInput, Account['self'].password);
+    } else {
+        console.log("未找密码登录,尝试一键登录");
+        let oneKeyLogin = $(OperationType.TEXT, "一键登录");
+        if(oneKeyLogin){
+            clickElement(oneKeyLogin)
+            handlePopups();
+        }else{
+            console.log("未找一键登录");
+            return false;
+        }
+    }
+    return true;
+}
+
+function setVal(node, v){
+    let label = node?.text();
+    console.log("已输入", label)
+    node.setText(v)
+    randomSleep(300, 800)
+}
+/**
  * 登录账号
  * @param {Object} account 账号信息 {name, phone, password}
  * @returns {Boolean} 是否登录成功
@@ -882,7 +1109,7 @@ function login(account) {
     console.log("正在登录账号：" + account.name + " (" + account.phone + ")");
     try {
         // 等待登录页面加载
-        randomSleep(2000, 3000);
+        randomSleep(1000, 2000);
         // 查找手机号输入框
         let phoneInput = $(OperationType.TEXT, "请输入手机号");
         if (!phoneInput) {
@@ -900,24 +1127,7 @@ function login(account) {
             console.log("未找到手机号输入框");
             return false;
         }
-        // 输入密码
-        let pwdInput = $(OperationType.ID, PKG+":id/password_et");
-        if (!pwdInput) {
-            // 尝试查找第二个输入框（通常是密码框）
-            let inputs = $(OperationType.CLASS_NAME, "android.widget.EditText", undefined, undefined, false);
-            if (inputs && inputs.size() >= 2) {
-                pwdInput = inputs.get(1);
-            }
-        }
-        
-        if (pwdInput) {
-            pwdInput.setText(account.password);
-            console.log("已输入密码");
-            randomSleep(300, 800);
-        } else {
-            console.log("未找到密码输入框");
-            return false;
-        }
+        clickPwdBtn();
         
         // 点击登录按钮
         let loginBtn = $(OperationType.ID, PKG+":id/confirm_btn");
@@ -968,7 +1178,7 @@ function signInForAccount(account) {
         if (!isLoggedIn()) {
             console.log("当前未登录，开始登录...");
             goToLogin();
-            if (!login(account)) {
+            if (!isLoggedIn()) {
                 console.log("登录失败，跳过该账号");
                 return false;
             }
@@ -996,10 +1206,12 @@ function signInForAccount(account) {
         // 5. 执行签到
         doSignIn();
         // 6. 点可领
-        doGetGold();// TODO 后续还有20个 如何解决识别倒计时 右下角宝箱图标
-        
-        // 7. 立即领取
-        // doQuicklyCollect();
+        scheduleTask(1500* 1000, doGetGold, 20);
+        // 7. 连续打卡白拿手机
+        alwaysCheckIn();
+        // 去观看
+        loadAd();
+        //
         // 8. 领福利
         if(!startAdTask(30)){
             console.log('观看 领福利-广告奖励 出现异常，请检查')
@@ -1010,10 +1222,7 @@ function signInForAccount(account) {
         }
         // 10. 去领取 挑战任务 30天 有可能进入到推金币游戏 (已处理)
         doGoLingQu();
-        if(goToSearch()){
-            doGoSearch();
-            console.log('去搜索 奖励获取完成')
-        }
+        goToSearch();
         console.log("========== 账号 " + account.name + " 签到流程完成 ==========");
         return true;
     } catch (e) {
@@ -1048,6 +1257,7 @@ function main() {
         
         for (let i = 0; i < accounts.length; i++) {
             let account = accounts[i];
+            Account['self'] = account;
             console.log("\n>>> 处理第 " + (i + 1) + "/" + accounts.length + " 个账号");
             
             // 如果不是第一个账号，需要先退出当前账号
@@ -1100,7 +1310,200 @@ function main() {
         console.hide();
     }
 }
+function checkProupAndClose(){
+    let closeBtn = className("android.view.ViewGroup").clickable(true).depth(15).findOne(1000);
+    if (closeBtn) {
+        // 二次校验：确保在屏幕右半边偏上
+        console.log('出现 领养xx 关闭按钮');
+        clickElement(closeBtn);
+    }
+    closeBtn = $(OperationType.CLASS_NAME,'android.widget.Image',12,0);
+    if(closeBtn){
+        // 点击签到出现的连续签到弹窗
+        console.log('出现连续签到xx 关闭按钮')
+        clickElement(closeBtn)
+    }
+}
 
-// 执行主函数
-main();
+/**
+ * 连续打卡白拿手机
+ */
+function alwaysCheckIn(){
+    let btn = $(OperationType.CONTAINS, '连续打卡白拿手机');
+    if(btn){
+        clickElement(btn)
+        btn = $(OperationType.TEXT, '重新选择商品');
+        if(btn){
+            clickElement(btn)
+            // 完成365天打卡任务 白拿好礼
+            // 现金1.5元
+            let award = $(OperationType.TEXT, sign_day.label);
+            if(award){
+                console.log(award)
+                clickElementBro(award)
+                let startTask = $(OperationType.TEXT, '开启挑战');
+                if(startTask){
+                    clickElement(startTask);
+                        clickAnyPonit();
+                }
+            }else{
+                console.log('未找到')
+            }
+
+        }
+        let signBtn = $(OperationType.TEXT, '去签到');
+        if(signBtn){
+            clickElement(signBtn);
+            randomSleep(1000, 3000);
+            let tomorrow = $(OperationType.TEXT, '明天一定来');
+            if(tomorrow){
+                clickElement(tomorrow);
+            }
+        }
+    }
+    let title = $(OperationType.CONTAINS, '完成365天打卡任务');
+    if(title){
+        back();
+    }
+}
+
+/**
+ * 前3天打卡得金币
+ */
+function alwaysCheckIn3(){
+    let btn = $(OperationType.TEXT_MATCHES, /前\d+天打卡得金币/);
+    if(btn){
+        clickElement(btn);
+        // TODO 点进来后应该点什么
+    }
+    let text = $(OperationType.CONTAINS, '今日打卡任务')
+    if(text){
+        back();
+    }
+}
+
+/**
+ * 开盲盒必得金币
+ */
+function openBindBox(){
+    let btn = $(OperationType.CONTAINS, '开盲盒必得金币');
+    if(btn){
+        clickElement(btn);
+        let happyAccept = $(OperationType.TEXT, '开心收下');
+        if(happyAccept){
+            clickElement(happyAccept);
+            let bindBox = $(OperationType.TEXT, '开盲盒');
+            if(bindBox){
+                clickElement(bindBox);
+                let again = $(OperationType.TEXT, '继续开盲盒');
+                if(again){
+                    clickElement(again)
+                    let goto = $(OperationType.TEXT, '去分享');
+                    if(goto){
+                        back();
+                    }
+                }
+            }
+        }
+    }
+}
+/**
+ * 到饭点领饭补
+ */
+function getLunchAward(){
+    let btn = $(OperationType.CONTAINS, '到饭点领饭补');
+    if(btn){
+        clickElement(btn);
+        let _btn = $(OperationType.CONTAINS, '待补签');
+        while(_btn && _btn.clickable()){
+            clickElement(_btn)
+            sleep(getRandomInt(30000, 31000));
+            let avdText = $(OperationType.TEXT, '广告');
+            if(avdText){
+                back();
+            }
+            _btn = $(OperationType.CONTAINS, '待补签');
+        }
+        console.log('-------')
+    }
+    let awardGold = $(OperationType.TEXT_MATCHES, /领取饭补\d+金币/);
+    if(awardGold){
+        clickElement(awardGold);
+        let closeBtn = $(OperationType.CLASS_NAME, 'android.widget.TextView');
+        if(closeBtn){
+            clickElement(closeBtn);
+            let closeBtn = $(OperationType.CONTAINS, '看广告最多再得');
+            if(closeBtn){
+                clickElement(closeBtn);
+                randomSleep(getRandomInt(26000, 30000));
+                successAward();
+                领取奖励();
+                const 到点领饭补金币 = $(OperationType.TEXT, '到点领饭补金币');
+                if(到点领饭补金币){
+                    back();
+                }
+            }
+        }
+    }
+}
+
+/**
+ *
+ */
+function goToVideo(){
+    let btn = $(OperationType.CONTAINS, '看视频赚金币');
+    if(btn){
+        clickElement(btn)
+    }
+}
+// 红包控件
+function isAdPage(){
+    let readImage = $(OperationType.TEXT_MATCHES,/\+\d+\s*金币/);
+    if(readImage){
+        return true;
+    }
+    return false;
+}
+function loadAd(){
+    let gotowatch = $(OperationType.TEXT, '去观看');
+    if(gotowatch) {
+        clickElement(gotowatch)
+    }
+    if(!isAdPage()){
+        console.log('没有在广告界面')
+        return false;
+    }
+    sleep(getRandomInt(15000, 17000));
+    for(let i = 1; i< Account.watch_video*2; i++){
+        console.log('当前第'+i/2+'个广告奖励')
+        sleep(getRandomInt(15000, 17000));
+        switchVideo('up');
+    }
+}
+
+function 领取奖励(){
+    let btn = $(OperationType.TEXT, '领取奖励');
+    if(btn){
+        clickElement(btn);
+        randomSleep(getRandomInt(26000, 30000));
+        successAward();
+    }
+}
+
+/**
+ * 已成功领取xxx金币
+ */
+function successAward(){
+    let allreayGet = $(OperationType.CONTAINS, '已成功领取');
+    if(allreayGet){
+        back()
+    }
+}
+// main();
+// doSignIn();
+// checkProupAndClose();
+// goToSearch();
+
+// getLunchAward();
+
 
