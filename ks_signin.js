@@ -28,7 +28,7 @@ const ACCOUNTS_FILE = "accounts.json";
 // 重试时间(分钟)
 const retry_time = 0.06;
 // 单位/进制
-const unit = 6;
+const unit = 60;
 
 // 控制台显示
 console.show();
@@ -142,19 +142,22 @@ function parseKeyWord(keyWord){
 }
 /**
  * 自动超时查找元素（统一查找函数）
- * @param {操作类型} type OperationType枚举值
- * @param {关键字} keyWord 查找关键字
- * @param {深度} nth 深度（可选，用于CLASS_NAME）
- * @param {索引} idx 索引（可选，用于CLASS_NAME）
- * @param {是否返回第一个} findOne 是否只返回第一个元素（默认true，CLASS_NAME类型默认false）
+ * @param {number} type - 操作类型，见 OperationType
+ * @param {string} keyWord - 查找关键词
+ * @param {number} [nth] - CLASS_NAME 时的 depth
+ * @param {number} [idx] - CLASS_NAME 时的 indexInParent
+ * @param {boolean} [findOne] - CLASS_NAME 时是否只取单个（默认 true）
+ * @param {number} [maxRetry] - 【新增】最大尝试次数。传 1 则只查一次不循环；不传则使用 keyWord 解析出的次数
  * @returns 找到的元素或元素集合
  */
-function $(type, keyWord, nth, idx, findOne) {
+function $(type, keyWord, nth, idx, findOne,maxRetry) {
     let ele = undefined;
     let findCount = 0;
     let result = parseKeyWord(keyWord)
     keyWord = result.prefix
-    retryCount = result.num
+    let retryCount = result.num
+    // 新增：如果外部指定了 maxRetry，优先使用外部的；否则用 keyword 里自带的
+    retryCount = (typeof maxRetry === 'number') ? maxRetry : retryCount;
     // CLASS_NAME类型默认返回find()结果，其他类型默认返回findOne()结果
     let shouldFindOne = findOne !== undefined ? findOne : (type !== OperationType.CLASS_NAME);
     
@@ -311,12 +314,15 @@ function openKuaishou() {
     try {
         // 尝试通过包名启动
         app.launchPackage(PKG);
-        // 启动后持续监测并处理 "AutoJs6想要打开 快手, 是否允许" 权限请求弹窗
-        handlePermissionDialog();
-        // 监测并处理 "同意并继续" 协议弹窗
-        handleAgreeDialog();
         // 通过查找底部导航栏"我"按钮确认 app 已加载完成（自动超时重试，替代固定 sleep）
         let profileBtn = $(OperationType.TEXT, "我");
+        if(!profileBtn){
+            // 启动后持续监测并处理 "AutoJs6想要打开 快手, 是否允许" 权限请求弹窗
+            handlePermissionDialog();
+            // 监测并处理 "同意并继续" 协议弹窗
+            handleAgreeDialog();
+            profileBtn = $(OperationType.TEXT, "我");
+        }
         if (profileBtn) {
             console.log("快手app已打开");
             return true;
@@ -392,16 +398,21 @@ function goToHome() {
  */
 function goToTaskCenter() {
     console.log("正在进入'任务中心'页面...");
-    let raskCenterBtn = $(OperationType.ID, PKG+":id/featured_left_hamburger");
+    let raskCenterBtn = $(OperationType.ID, PKG+":id/left_btn");
     if (raskCenterBtn) {
         clickElement(raskCenterBtn);
         console.log("已点击'左上角更多'按钮");
+    }else{
+        raskCenterBtn = $(OperationType.DESC, "侧边栏");
+        clickElement(raskCenterBtn);
     }
-    let centerBtn = $(OperationType.DESC, '任务中心');
+    let centerBtn = $(OperationType.TEXT, '任务中心');
     if(centerBtn){
         clickElement(centerBtn);
         console.log('已点击"任务中心"按钮')
         return true
+    }else{
+        goToTaskCenter();
     }
     return false
 }
@@ -429,7 +440,7 @@ function clickElement(element){
     try {
         let target = element;
         let depth = 0;
-        while(target && !target.clickable() && depth < 5){
+        while(target && !target.clickable()){
             target = target.parent();
             depth++;
         }
@@ -584,11 +595,8 @@ function doSignIn() {
     for (let btnText of signInBtnTexts) {
         let signBtn = $(OperationType.BOUNDS_BY_TEXT, btnText);
         if (signBtn) {
-            clickElement(signBtn);
-            console.log("已点击签到按钮：" + btnText);
-           // 检查是否有签到成功的提示
-            checkSignInResult();
-            return true;
+            clickLocation(signBtn, btnText);
+            return checkSignInResult();
         }
     }
     console.log('[!WARN]:签到失败')
@@ -603,7 +611,6 @@ function doGetGold() {
     let goldenBtn = $(OperationType.CONTAINS, '点可领');
     if(goldenBtn) {
         clickElement(goldenBtn);
-        console.log("已点击'点可领'按钮");
         // 6. 关闭弹窗
         closePopups();
         // 需要通过goldenBtn获得倒计时
@@ -919,7 +926,6 @@ function closePopups() {
             lookAdPopup.click();
             startAdTask(1)
         }
-        return;
     }
     // 查找关闭按钮
     // let closeBtn = $(OperationType.CLASS_NAME,'android.widget.Image',12,0);
@@ -1203,27 +1209,12 @@ function signInForAccount(account) {
                 back();
             }
         }
-        // 5. 执行签到
-        doSignIn();
-        // 6. 点可领
-        scheduleTask(1500* 1000, doGetGold, 20);
-        // 7. 连续打卡白拿手机
-        alwaysCheckIn();
-        // 去观看
-        loadAd();
-        //
-        // 8. 领福利
-        if(!startAdTask(30)){
-            console.log('观看 领福利-广告奖励 出现异常，请检查')
+        let taskCenterPage = $(OperationType.CONTAINS, '我的现金');
+        if(taskCenterPage){
+            startTask();
+            // 6. 点可领
+            scheduleTask(1500* 1000, doGetGold, 20);
         }
-        // 9. 看短剧
-        if(!startWatchShortVideo()){
-            console.log('观看 看短剧-奖励 出现异常,请检查')
-        }
-        // 10. 去领取 挑战任务 30天 有可能进入到推金币游戏 (已处理)
-        doGoLingQu();
-        goToSearch();
-        console.log("========== 账号 " + account.name + " 签到流程完成 ==========");
         return true;
     } catch (e) {
         console.log("处理账号 " + account.name + " 时出错：" + e.message);
@@ -1232,6 +1223,72 @@ function signInForAccount(account) {
     }
 }
 
+function 检验直播间返回出现弹窗(){
+    let 放弃奖励 = $(OperationType.TEXT, '放弃奖励');
+    if(放弃奖励){
+        console.log('出现再看一个再领金币最高')
+        clickElement(放弃奖励)
+    }
+    let 退出直播间 = $(OperationType.TEXT, '退出直播间')
+    if(退出直播间){
+        console.log('出现看了这么久，留个关注再走吧')
+        clickElement(退出直播间)
+    }
+}
+//看直播领金币数量6
+const LIVE_COUNT = 6;
+
+function 看直播得金币(){
+    let ele = $(OperationType.CONTAINS, '看直播得金币')
+    if(ele){
+        clickElement(ele)
+        let page = $(OperationType.CONTAINS, '看直播最高赚')
+        if(page){
+            let liveVideo = $(OperationType.ID, PKG+":id/play_view_container");
+            clickElement(liveVideo);
+            let item = $(OperationType.TEXT, '关注');
+            if(item){
+                let proup = $(OperationType.TEXT,'当前直播可用')
+                if(proup)back();
+                console.log('来到直播间，开始计时30s')
+                randomSleep(30 * 1000, 31 * 1000)
+                back();
+                检验直播间返回出现弹窗();
+            }else{
+                console.log('没有成功进入直播间')
+            }
+        }else{
+            back();
+            startTask();
+        }
+    }
+}
+
+function startTask(){
+    if (doSignIn()){
+        console.log('签到成功')
+    }else{
+        console.log('签到失败')
+        back();
+        startTask();
+    }
+    连续打卡白拿手机();
+    // 去观看
+    loadAd();
+    //
+    // 8. 领福利
+    if(!startAdTask(30)){
+        console.log('观看 领福利-广告奖励 出现异常，请检查')
+    }
+    // 9. 看短剧
+    if(!startWatchShortVideo()){
+        console.log('观看 看短剧-奖励 出现异常,请检查')
+    }
+    // 10. 去领取 挑战任务 30天 有可能进入到推金币游戏 (已处理)
+    doGoLingQu();
+    goToSearch();
+    console.log("========== 账号 " + account.name + " 签到流程完成 ==========");
+}
 /**
  * 主函数：执行多账号签到流程
  */
@@ -1328,7 +1385,7 @@ function checkProupAndClose(){
 /**
  * 连续打卡白拿手机
  */
-function alwaysCheckIn(){
+function 连续打卡白拿手机(){
     let btn = $(OperationType.CONTAINS, '连续打卡白拿手机');
     if(btn){
         clickElement(btn)
@@ -1499,9 +1556,23 @@ function successAward(){
         back()
     }
 }
-// main();
+function 立即打卡(){
+    let ele = $(OperationType.TEXT, '立即打卡');
+    if(ele){
+        clickElement(ele);
+        ele = $(OperationType.TEXT, '去签到')
+        clickElement(ele);
+        ele = $(OperationType.CONTAINS, '完成365天打卡任务')
+        back();
+    }
+}
+
+连续打卡白拿手机();
 // doSignIn();
+// back();
 // checkProupAndClose();
+
+// clickElement(signBtn)
 // goToSearch();
 
 // getLunchAward();
