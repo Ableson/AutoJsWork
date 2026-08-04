@@ -451,6 +451,16 @@ const VisionEngine = (function() {
         }
     }
 
+    // 只查一次，不等待，用于弹窗/状态检测
+    function findNow(type, keyword) {
+        // 只查一次，不等待，用于弹窗/状态检测
+        if (type === FindType.TEXT) return text(keyword).findOnce();
+        if (type === FindType.CONTAINS) return textContains(keyword).findOnce();
+        if (type === FindType.ID) return id(keyword).findOnce();
+        if (type === FindType.DESC) return desc(keyword).findOnce();
+        return null;
+    }
+
     // 公共：智能点击（先找图/控件，失败则比例兜底）
     function smartClick(primaryType, keyword, ratioX, ratioY, options) {
         if (findAndClick(primaryType, keyword, options)) return true;
@@ -663,9 +673,9 @@ const KuaishouApp = {
         }
         if (VisionEngine.findAndClick(FindType.TEXT, "任务中心", { maxRetry: 3 })) {
             Utils.randomSleep(1000, 1500);
-            // 处理百亿金币弹窗
-            let pop = VisionEngine.find(FindType.TEXT, "立即参与", { maxRetry: 2 });
-            if (pop) back();
+
+            // 进入任务中心后，立即清理所有弹窗
+            PopupHandler.clearAll();
             return true;
         }
         return false;
@@ -1018,7 +1028,15 @@ const TaskCenter = {
     // 执行全部任务
     runAll: function() {
         console.log("\n========== 开始执行任务 ==========");
+
+        // 先确保在任务中心并清理弹窗
+        if (!TaskCenterNavigator.ensureInTaskCenter()) {
+            console.log("无法进入任务中心，终止任务");
+            return;
+        }
+
         TaskCenter.continuousSign();
+        TaskCenterNavigator.ensureInTaskCenter();  // ← 每个任务后兜底
 
         if (TaskCenter.doSignIn()) {
             console.log("签到成功");
@@ -1027,31 +1045,177 @@ const TaskCenter = {
             back();
             TaskCenter.doSignIn();
         }
+        TaskCenterNavigator.ensureInTaskCenter();
 
         TaskCenter.loadAd();
+        TaskCenterNavigator.ensureInTaskCenter();
 
         if (!TaskCenter.doAdTask(30)) {
             console.log("领福利广告异常");
         }
+        TaskCenterNavigator.ensureInTaskCenter();
 
         if (!TaskCenter.doWatchShortVideo()) {
             console.log("看短剧异常");
         }
+        TaskCenterNavigator.ensureInTaskCenter();
 
         TaskCenter.doGoLingQu();
-        TaskCenter.doSearch();
-        TaskCenter.getLunchAward();
-        TaskCenter.openBindBox();
-        TaskCenter.doLive();
+        TaskCenterNavigator.ensureInTaskCenter();
 
-        // 点可领：启动定时轮询（每 25 分钟一次，共 20 次，约 8 小时）
-        Utils.scheduleTask(Config.GOLD_INTERVAL, TaskCenter.doGetGold, Config.GOLD_COUNT);
+        TaskCenter.doSearch();
+        TaskCenterNavigator.ensureInTaskCenter();
+
+        TaskCenter.getLunchAward();
+        TaskCenterNavigator.ensureInTaskCenter();
+
+        TaskCenter.openBindBox();
+        TaskCenterNavigator.ensureInTaskCenter();
+
+        TaskCenter.doLive();
+        TaskCenterNavigator.ensureInTaskCenter();
+
+        // 点可领：启动定时轮询
+        // 关键：轮询的每次执行前都要确保在任务中心
+        let timer = Utils.scheduleTask(Config.GOLD_INTERVAL, function() {
+            if (TaskCenterNavigator.ensureInTaskCenter(3)) {  // ← 轮询前先兜底
+                TaskCenter.doGetGold();
+            } else {
+                console.log("轮询时无法回到任务中心，跳过本次");
+            }
+        }, Config.GOLD_COUNT);
 
         console.log("========== 主任务执行完毕，点可领轮询已启动 ==========\n");
     }
 };
 
-// ==================== 7. 账号管理 ====================
+// ==================== 7.弹窗处理模块 ====================
+const PopupHandler = {
+    // 已知的文字类弹窗，直接点
+    knownTextPopups: [
+        { text: "立即参与", action: "back" },           // 瓜分百亿金币
+        { text: "同意并继续", action: "click" },        // 协议弹窗
+        { text: "始终允许", action: "click" },          // 权限弹窗
+        { text: "我知道了", action: "click" },          // 提示弹窗
+        { text: "关闭", action: "click" },              // 普通关闭
+        { text: "暂不开启", action: "click" },          // 功能引导
+        { text: "取消", action: "click" },              // 确认对话框
+    ],
+
+    /**
+     * 快速弹窗清理（优化版）
+     * 用 findOnce 替代 findOne，从 7 秒降到 0.5 秒内
+     */
+    clearAll: function() {
+        console.log("开始清理弹窗...");
+        let maxAttempts = 5;
+
+        for (let i = 0; i < maxAttempts; i++) {
+            let found = false;
+
+            // 1. 文字弹窗：用 findOnce 立即检测，不等待
+            for (let popup of PopupHandler.knownTextPopups) {
+                // findOnce() 只查一次，有就有，没有立刻返回 null
+                let btn = text(popup.text).findOnce() || textContains(popup.text).findOnce();
+                if (btn) {
+                    console.log("检测到弹窗: " + popup.text);
+                    if (popup.action === "click") {
+                        btn.click();
+                    } else {
+                        back();
+                    }
+                    found = true;
+                    Utils.randomSleep(300, 500);  // 给页面一点反应时间
+                    break;
+                }
+            }
+            if (found) continue;
+
+            // 2. 图像匹配 X 图标（等你发截图后启用）
+            // let imgFound = VisionEngine.find(FindType.IMAGE, "popup_close.png", {
+            //     maxRetry: 1, region: [800, 0, 280, 400]
+            // });
+            // if (imgFound) { ... }
+
+            // 3. 检测是否已回到任务中心
+            let inTaskCenter = textContains("我的现金").findOnce() || textContains("日常任务").findOnce();
+            if (inTaskCenter) {
+                console.log("✅ 弹窗清理完毕");
+                break;
+            }
+
+            // 不在任务中心且没检测到弹窗，可能是需要返回
+            if (!found && i < maxAttempts - 1) {
+                back();
+                Utils.randomSleep(300, 500);
+            }
+        }
+    },
+
+    /**
+     * 等你发 X 图标截图后，用这个精确版本替换上面的兜底逻辑
+     */
+    clearByImage: function(templatePath) {
+        console.log("使用图像识别清理弹窗...");
+        let maxAttempts = 3;
+        for (let i = 0; i < maxAttempts; i++) {
+            let found = VisionEngine.findAndClick(FindType.IMAGE, templatePath, {
+                threshold: 0.85,
+                maxRetry: 1,
+                region: [800, 0, 280, 400],   // 右上角区域（X 按钮常见位置）
+            });
+            if (found) {
+                console.log("已点击图像关闭按钮");
+                Utils.randomSleep(500, 800);
+            } else {
+                break;
+            }
+        }
+    }
+};
+
+// ==================== 8.任务中心导航兜底 ====================
+const TaskCenterNavigator = {
+    /**
+     * 确保当前在任务中心页面
+     * 如果不在，尝试返回直到进入任务中心
+     */
+    ensureInTaskCenter: function(maxBackCount) {
+        maxBackCount = maxBackCount || 5;
+        console.log("确保在任务中心页面...");
+
+        for (let i = 0; i < maxBackCount; i++) {
+            // 检测是否在任务中心（通过特征文字）
+            let isInCenter = VisionEngine.find(FindType.CONTAINS, "我的现金", { maxRetry: 1 })
+                || VisionEngine.find(FindType.CONTAINS, "日常任务", { maxRetry: 1 })
+                || VisionEngine.find(FindType.CONTAINS, "签到", { maxRetry: 1 });
+
+            if (isInCenter) {
+                console.log("✅ 已在任务中心");
+                // 清理可能的弹窗
+                PopupHandler.clearAll();
+                return true;
+            }
+
+            // 不在任务中心，尝试返回
+            console.log("不在任务中心，执行返回 (" + (i + 1) + "/" + maxBackCount + ")");
+            back();
+            Utils.randomSleep(800, 1200);
+        }
+
+        // 返回多次仍未到任务中心，尝试重新进入
+        console.log("返回多次未到任务中心，尝试重新导航...");
+        if (KuaishouApp.goToTaskCenter()) {
+            PopupHandler.clearAll();
+            return true;
+        }
+
+        console.log("❌ 无法回到任务中心");
+        return false;
+    }
+};
+
+// ==================== 9. 账号管理 ====================
 const AccountManager = {
     load: function() {
         try {
@@ -1067,7 +1231,7 @@ const AccountManager = {
     }
 };
 
-// ==================== 8. 主入口 ====================
+// ==================== 10. 主入口 ====================
 function main() {
     console.show();
     console.clear();
