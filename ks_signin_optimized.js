@@ -11,8 +11,8 @@ const Config = Object.freeze({
     PKG: "com.smile.gifmaker",
     ACCOUNTS_FILE: "accounts.json",
     // 制作模板图时的基准分辨率（你截图用的那台手机）
-    BASE_WIDTH: 1080,
-    BASE_HEIGHT: 2400,
+    BASE_WIDTH: 1440,
+    BASE_HEIGHT: 3200,
     // 默认重试：0.06分钟 = 3.6秒
     RETRY_TIME: 0.06,
     UNIT: 60,
@@ -28,6 +28,8 @@ const Config = Object.freeze({
     // 点可领轮询：每 25 分钟(1500秒)执行一次，共 20 次
     GOLD_INTERVAL: 1500 * 1000,
     GOLD_COUNT: 20,
+    // ⭐ X关闭按钮模板路径
+    TEMPLATE_CLOSE_X: "/sdcard/templates/ks_popup_close_x.png",
 });
 
 // ==================== 2. 查找类型枚举 ====================
@@ -716,30 +718,57 @@ const TaskCenter = {
         }
     },
 
-    // 签到
+    // ⭐ 修复版签到：处理"连续签到14天"弹窗，避免点到背景元素
     doSignIn: function() {
         console.log("执行签到...");
-        let btn = VisionEngine.find(FindType.BOUNDS_BY_TEXT, "立即签到");
+
+        // 步骤1：检测是否有签到活动弹窗遮挡
+        let hasSignPopup = text("连续签到").findOnce()
+            || text("今日签到可领").findOnce()
+            || text("已连续签").findOnce();
+
+        if (hasSignPopup) {
+            console.log("检测到签到活动弹窗");
+
+            // 步骤2：获取所有"立即签到"，过滤出弹窗内的（通过 bounds.y 范围）
+            let allBtns = text("立即签到").find();
+            if (allBtns && allBtns.size() > 0) {
+                for (let i = 0; i < allBtns.size(); i++) {
+                    let btn = allBtns.get(i);
+                    let b = btn.bounds();
+                    // ⭐ 关键：弹窗内的按钮 y 坐标通常在 500~2800 之间
+                    // 背景的按钮被弹窗遮挡，通常在更上方或更下方
+                    if (b.centerY() > 500 && b.centerY() < 2800) {
+                        console.log("点击弹窗内立即签到: (" + b.centerX() + ", " + b.centerY() + ")");
+                        Utils.clickPoint(b.centerX(), b.centerY(), "弹窗内立即签到");
+                        sleep(1500);
+                        return TaskCenter.checkSignResult();
+                    }
+                }
+            }
+
+            // 步骤3：弹窗内没找到，关闭弹窗回任务中心正常签到
+            console.log("弹窗内未找到签到按钮，关闭弹窗");
+            PopupHandler.findCloseX(false);
+            sleep(800);
+        }
+
+        // 步骤4：在任务中心页面正常查找"立即签到"
+        let btn = VisionEngine.find(FindType.BOUNDS_BY_TEXT, "立即签到", { maxRetry: 3 });
         if (btn) {
             Utils.clickPoint(btn.centerX(), btn.centerY(), "立即签到");
             return TaskCenter.checkSignResult();
         }
-        console.log("未找到立即签到按钮");
+
+        console.log("[!WARN] 未找到立即签到按钮");
         return false;
     },
 
     checkSignResult: function() {
-        let successTexts = ["签到成功", "已签到", "签到完成", "领取成功", "已领取"];
+        let successTexts = ["签到成功", "已签到", "签到完成", "领取成功", "已领取", "明天再来", "今日已签"];
         for (let t of successTexts) {
-            if (VisionEngine.find(FindType.CONTAINS, t, { maxRetry: 2 })) {
-                console.log("✓ 签到成功");
-                return true;
-            }
-        }
-        let already = ["今日已签到", "明天再来"];
-        for (let t of already) {
-            if (VisionEngine.find(FindType.CONTAINS, t, { maxRetry: 2 })) {
-                console.log("✓ 今日已签到");
+            if (textContains(t).findOnce()) {  // findOnce 极速检测
+                console.log("✓ 签到结果: " + t);
                 return true;
             }
         }
@@ -1089,88 +1118,107 @@ const TaskCenter = {
     }
 };
 
-// ==================== 7.弹窗处理模块 ====================
+// ==================== 7.弹窗处理模块（基于小米11 Pro 1440x3200 精确适配） ====================
 const PopupHandler = {
-    // 已知的文字类弹窗，直接点
     knownTextPopups: [
-        { text: "立即参与", action: "back" },           // 瓜分百亿金币
-        { text: "同意并继续", action: "click" },        // 协议弹窗
-        { text: "始终允许", action: "click" },          // 权限弹窗
-        { text: "我知道了", action: "click" },          // 提示弹窗
-        { text: "关闭", action: "click" },              // 普通关闭
-        { text: "暂不开启", action: "click" },          // 功能引导
-        { text: "取消", action: "click" },              // 确认对话框
+        { text: "立即参与", action: "back" },
+        { text: "同意并继续", action: "click" },
+        { text: "始终允许", action: "click" },
+        { text: "我知道了", action: "click" },
+        { text: "关闭", action: "click" },
+        { text: "暂不开启", action: "click" },
+        { text: "取消", action: "click" },
+        { text: "确认放弃", action: "click" },
+        { text: "仍要退出", action: "click" },
     ],
 
     /**
-     * 快速弹窗清理（优化版）
-     * 用 findOnce 替代 findOne，从 7 秒降到 0.5 秒内
+     * 快速检测是否有弹窗遮挡（全部 findOnce，不等待）
      */
-    clearAll: function() {
-        console.log("开始清理弹窗...");
-        let maxAttempts = 5;
-
-        for (let i = 0; i < maxAttempts; i++) {
-            let found = false;
-
-            // 1. 文字弹窗：用 findOnce 立即检测，不等待
-            for (let popup of PopupHandler.knownTextPopups) {
-                // findOnce() 只查一次，有就有，没有立刻返回 null
-                let btn = text(popup.text).findOnce() || textContains(popup.text).findOnce();
-                if (btn) {
-                    console.log("检测到弹窗: " + popup.text);
-                    if (popup.action === "click") {
-                        btn.click();
-                    } else {
-                        back();
-                    }
-                    found = true;
-                    Utils.randomSleep(300, 500);  // 给页面一点反应时间
-                    break;
-                }
-            }
-            if (found) continue;
-
-            // 2. 图像匹配 X 图标（等你发截图后启用）
-            // let imgFound = VisionEngine.find(FindType.IMAGE, "popup_close.png", {
-            //     maxRetry: 1, region: [800, 0, 280, 400]
-            // });
-            // if (imgFound) { ... }
-
-            // 3. 检测是否已回到任务中心
-            let inTaskCenter = textContains("我的现金").findOnce() || textContains("日常任务").findOnce();
-            if (inTaskCenter) {
-                console.log("✅ 弹窗清理完毕");
-                break;
-            }
-
-            // 不在任务中心且没检测到弹窗，可能是需要返回
-            if (!found && i < maxAttempts - 1) {
-                back();
-                Utils.randomSleep(300, 500);
-            }
-        }
+    hasPopup: function() {
+        return text("连续签到").findOnce()
+            || text("今日签到可领").findOnce()
+            || text("已连续签").findOnce()
+            || desc("关闭").findOnce()
+            // || PopupHandler.findCloseCenter(true);  // ⭐ 新增
+            || PopupHandler.findCloseX(true);
     },
 
     /**
-     * 等你发 X 图标截图后，用这个精确版本替换上面的兜底逻辑
+     * ⭐ 图像识别 X 关闭按钮（基于小米11 Pro 1440x3200 精确裁剪）
+     * 模板区域: [1270, 570, 80, 80]
+     * @param {boolean} detectOnly - true=只检测不点击
      */
-    clearByImage: function(templatePath) {
-        console.log("使用图像识别清理弹窗...");
-        let maxAttempts = 3;
-        for (let i = 0; i < maxAttempts; i++) {
-            let found = VisionEngine.findAndClick(FindType.IMAGE, templatePath, {
-                threshold: 0.85,
-                maxRetry: 1,
-                region: [800, 0, 280, 400],   // 右上角区域（X 按钮常见位置）
-            });
-            if (found) {
-                console.log("已点击图像关闭按钮");
-                Utils.randomSleep(500, 800);
+    findCloseX: function(detectOnly) {
+        let res = VisionEngine.find(FindType.IMAGE, Config.TEMPLATE_CLOSE_X, {
+            threshold: 0.82,
+            maxRetry: 1,
+            region: [1200, 500, 240, 280],  // ⭐ 右上角精确区域（基准1440x3200）
+            autoScale: true
+        });
+        if (res && res.found) {
+            if (!detectOnly) {
+                console.log("🎯 图像识别点击 X 关闭按钮: (" + res.x + ", " + res.y + ")");
+                click(res.x, res.y);
+                sleep(500);
+            }
+            return true;
+        }
+        return false;
+    },
+    /**
+     * 通用弹窗清理
+     * @param {boolean} allowBack - 是否允许用 back() 退出弹窗。
+     *                              在任务中心内调用时应传 false，防止退出页面
+     */
+    clearAll: function(allowBack) {
+        allowBack = allowBack !== false;
+        console.log("清理弹窗... allowBack=" + allowBack);
+
+        for (let i = 0; i < 5; i++) {
+            let handled = false;
+
+            // 1. 文字弹窗
+            for (let p of PopupHandler.knownTextPopups) {
+                let btn = text(p.text).findOnce() || textContains(p.text).findOnce();
+                if (btn) {
+                    console.log("🧹 文字弹窗: " + p.text);
+                    p.action === "click" ? btn.click() : back();
+                    handled = true;
+                    sleep(400);
+                    break;
+                }
+            }
+            if (handled) continue;
+
+            // 2. 右上角 X 按钮
+            if (PopupHandler.findCloseX(false)) {
+                handled = true;
+                continue;
+            }
+
+            // 3. ⭐ 新增：中间弹窗关闭按钮
+            // if (PopupHandler.findCloseCenter(false)) {
+            //     handled = true;
+            //     continue;
+            // }
+
+            // 3. 检测是否已干净
+            if (!PopupHandler.hasPopup()) {
+                console.log("✅ 弹窗清理完毕");
+                return true;
+            }
+
+            // 4. 兜底 back（仅在允许时）
+            if (allowBack && i < 4) {
+                console.log("尝试 back 退出弹窗");
+                back();
+                sleep(600);
             } else {
                 break;
             }
         }
+        return false;
     }
 };
 
@@ -1178,32 +1226,35 @@ const PopupHandler = {
 const TaskCenterNavigator = {
     /**
      * 确保当前在任务中心页面
-     * 如果不在，尝试返回直到进入任务中心
+     * 先清理弹窗，再检测特征元素，不在就返回，最后兜底重新导航
      */
     ensureInTaskCenter: function(maxBackCount) {
         maxBackCount = maxBackCount || 5;
         console.log("确保在任务中心页面...");
 
         for (let i = 0; i < maxBackCount; i++) {
-            // 检测是否在任务中心（通过特征文字）
-            let isInCenter = VisionEngine.find(FindType.CONTAINS, "我的现金", { maxRetry: 1 })
-                || VisionEngine.find(FindType.CONTAINS, "日常任务", { maxRetry: 1 })
-                || VisionEngine.find(FindType.CONTAINS, "签到", { maxRetry: 1 });
+            // 先清理弹窗（避免弹窗遮挡检测）
+            PopupHandler.clearAll(false);
+
+            // 检测是否在任务中心（findOnce 快速检测）
+            let isInCenter = textContains("我的现金").findOnce()
+                || textContains("日常任务").findOnce()
+                || textContains("签到").findOnce()
+                || textContains("连续打卡").findOnce()
+                || textContains("点可领").findOnce();
 
             if (isInCenter) {
                 console.log("✅ 已在任务中心");
-                // 清理可能的弹窗
-                PopupHandler.clearAll();
                 return true;
             }
 
             // 不在任务中心，尝试返回
             console.log("不在任务中心，执行返回 (" + (i + 1) + "/" + maxBackCount + ")");
             back();
-            Utils.randomSleep(800, 1200);
+            Utils.randomSleep(600, 1000);
         }
 
-        // 返回多次仍未到任务中心，尝试重新进入
+        // 返回多次仍未到，尝试重新导航
         console.log("返回多次未到任务中心，尝试重新导航...");
         if (KuaishouApp.goToTaskCenter()) {
             PopupHandler.clearAll();
